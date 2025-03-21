@@ -1,0 +1,124 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from datetime import datetime
+
+# Read the data file (assuming it is space-separated)
+file_path = "NissanLeafTrip5.csv"  # Modify the filename as needed
+df = pd.read_csv(file_path)
+
+# # Ensure timestamps are properly parsed
+# df["Time"] = pd.to_datetime(df["Time"], errors="coerce")
+
+# Energy efficiency (km/kWh)
+def energy_consumption(df):
+    BatteryCapacity = 40  # kWh capacity by manufacturer
+    SOC_in = float(df["SOC"].iloc[0])
+    SOC_fi = df["SOC"].iloc[-1]
+    Energyconsumed = BatteryCapacity * (SOC_in - SOC_fi)
+    Odo_ini = df["Odometer"].iloc[0]
+    Odo_fi = df["Odometer"].iloc[-1]
+    Distancetravelled = Odo_fi - Odo_ini
+    Energy_Efficiency = Distancetravelled / Energyconsumed if Energyconsumed != 0 else np.nan
+    return Energyconsumed, Energy_Efficiency
+
+# Calculate acceleration
+def calculate_acceleration(speed, time):
+    acceleration = np.diff(speed) / np.diff(time)
+    return np.insert(acceleration, 0, np.nan)  # First value will be NaN
+
+# Calculate jerk
+def calculate_jerk(acceleration, time):
+    jerk = np.diff(acceleration) / np.diff(time[0:])  # Skip first NaN
+    return np.insert(jerk, 0, np.nan)  # First value will be NaN
+
+# Calculate harsh braking events
+def calculate_harsh_braking_events(braking_data, threshold_multiplier=2):
+    if not isinstance(braking_data, np.ndarray):
+        braking_data = np.array(braking_data)
+    
+    mean_braking = np.mean(braking_data)
+    std_braking = np.std(braking_data)
+    threshold = mean_braking + threshold_multiplier * std_braking
+    harsh_braking_indices = np.where(braking_data > threshold)[0]
+    
+    return harsh_braking_indices
+
+# Detect coasting
+def detect_coasting(df, accel_threshold=0.1, brake_threshold=0.1):
+    df["Speed_m_s"] = df["Speed"] * (1000 / 3600)
+    # df["Time_diff_s"] = np.diff(df["Speed"]) / np.diff(df["Time"][0:])
+    df["Acceleration_m_s2"] = df["Speed_m_s"].diff() / df["Time"].diff()
+    
+    coasting_conditions = (
+        (df["Acceleration_m_s2"].abs() < accel_threshold) &
+        (df["Brake"] < brake_threshold) &
+        (df["Speed_m_s"] > 0)
+    )
+    
+    return df[coasting_conditions]
+
+# Process the data
+df["Acceleration"] = calculate_acceleration(df["Speed"], df["Time"].astype(int))
+df["Jerk"] = calculate_jerk(df["Acceleration"], df["Time"].astype(int))
+energy_consumed, energy_efficiency = energy_consumption(df)
+harsh_braking_events = calculate_harsh_braking_events(df["Brake"])
+coasting_events = detect_coasting(df)
+
+# Save results to a new file
+output_file = "trip_results.csv"
+df.to_csv(output_file, index=False)
+
+print(f"Processed trip data saved to: {output_file}")
+
+
+################################################################################################################################################
+
+import pandas as pd
+from datetime import datetime
+
+def convert_timestamps_to_seconds(df2):
+    # Extract timestamp in seconds from microseconds
+    timestamp_sec = [i // 1_000_000 for i in df2['Timestamp']]
+    
+    # Convert timestamps to datetime objects
+    dt_object = [datetime.fromtimestamp(ts) for ts in timestamp_sec]
+    
+    # Generate formatted datetime strings including microseconds
+    formatted_dates = []
+    for i in range(len(timestamp_sec)):
+        s = dt_object[i].strftime('%Y-%m-%d %H:%M:%S')
+        s += '.' + str(int(df2['Timestamp'].iloc[i] % 1_000_000)).zfill(6)  # Adjusting to 6 digits for microseconds
+        formatted_dates.append(s)
+    
+    # Parse timestamps into datetime objects with microseconds
+    datetime_objects = [datetime.strptime(ts, '%Y-%m-%d %H:%M:%S.%f') for ts in formatted_dates]
+    
+    # Calculate time difference relative to the earliest timestamp in seconds
+    earliest_timestamp = min(datetime_objects)
+    Time = [(ts - earliest_timestamp).total_seconds() for ts in datetime_objects]
+
+    return Time
+
+if __name__ == "__main__":
+    # Change this filename to match your data file
+    # input_file = "Dataset_Preprocessed.csv"
+    
+    # Read the CSV datafile which should contain at least 'Trip ID' and 'Timestamp' columns
+    df = pd.read_csv("Dataset_Preprocessed.csv")
+    
+    # Get the unique trip IDs
+    trip_ids = df['Trip'].unique()
+    
+    for trip_id in trip_ids:
+        # Filter rows corresponding to the current trip id
+        trip_df = df[df['Trip'] == trip_id].copy()
+        
+        # Compute the Time column using the provided conversion function
+        trip_df['Time'] = convert_timestamps_to_seconds(trip_df)
+        
+        # Save each trip's data to a CSV file named with its Trip ID
+        output_filename = f"NissanLeafTrip{trip_id}.csv"
+        trip_df.to_csv(output_filename, index=False)
+        print(f"Saved trip {trip_id} to {output_filename}")
